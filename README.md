@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Bookmyshow.world: festival ticket site, backend and admin dashboard
 
 The festival ticket site for Bookmyshow.world.
@@ -95,3 +96,6 @@ Use start command `node server.js`, set the variables from `.env.example` in the
 - **Payments:** Stripe hosts the card form, so card data never touches this server. A payment is only marked paid after the server asks Stripe directly or receives a signed webhook.
 - **Spam protection:** the contact form uses a honeypot field, a too-fast-submit check and rate limiting. Every query is saved to the dashboard even if email fails.
 - **Motion:** `prefers-reduced-motion` turns off the spotlight sway, photo drift, badge spin and entrance motion.
+=======
+# bookmyshow.world
+>>>>>>> 04c05f0988d11ffe3b63a32ebf45aff7babda343

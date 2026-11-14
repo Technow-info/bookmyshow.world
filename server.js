@@ -499,4 +499,6 @@ function start() {
 }
 
 if (require.main === module) start();
-module.exports = server;
+module.exports = (req, res) => {
+  server.emit('request', req, res);
+};
