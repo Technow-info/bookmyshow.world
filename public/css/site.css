@@ -418,3 +418,5 @@ input[aria-invalid="true"],textarea[aria-invalid="true"]{border-color:var(--err-
   .bk{display:none}.glow-follow{display:none}
 }
 @media (max-width:700px){.sec-head{grid-template-columns:1fr;gap:var(--space-3)}.sec-num{grid-row:auto;width:44px;padding-top:10px}.sec-head .h2{font-size:clamp(32px,9vw,40px)}}
+.checkout > *{min-width:0}
+@media (max-width:380px){.tier-opt{flex-wrap:wrap;padding:var(--space-4)}.tier-opt .grow{flex:1 1 70%}.tier-opt .pr{flex-basis:100%;padding-left:28px;font-size:18px}.steps li{padding:6px 10px 6px 6px;font-size:12px}}

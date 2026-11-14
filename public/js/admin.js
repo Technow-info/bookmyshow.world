@@ -61,7 +61,8 @@
     mp.className = 'pill ' + (s.mode.payments === 'live' ? 'good' : 'warn');
     mm.textContent = s.mode.mail === 'on' ? 'Gmail on' : 'Gmail off';
     mm.className = 'pill ' + (s.mode.mail === 'on' ? 'good' : 'warn');
-    var tw = $('#tk-warn'); tw.hidden = !t.ticketsPending; tw.textContent = t.ticketsPending + ' ticket email' + (t.ticketsPending === 1 ? '' : 's') + ' not delivered: use Resend';
+    var tw = $('#tk-warn'); tw.hidden = !t.ticketsPending;
+    tw.textContent = s.mode.mail === 'off' ? 'Email not set up: ' + t.ticketsPending + ' e-ticket email' + (t.ticketsPending === 1 ? '' : 's') + ' not sent' : t.ticketsPending + ' ticket email' + (t.ticketsPending === 1 ? '' : 's') + ' not delivered: use Resend';
     $('#updated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   }
 

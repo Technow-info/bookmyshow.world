@@ -18,32 +18,67 @@ The festival ticket site for Bookmyshow.world.
 | `lib/stripe.js` | Stripe Checkout session, server-side payment check and webhook signature check. |
 | `lib/mailer.js` | Gmail SMTP sender (inline images, attachments). Every query and new-booking alert goes to **connect.technow@gmail.com**. |
 | `lib/tickets.js`, `lib/qr.js` | E-tickets: one signed QR code per pass, the ticket email and the online ticket page (`/ticket?b=…&t=…`). |
-| `data/db.json` | Bookings and queries. Created automatically, so back it up. |
+| `data/db.json` | Bookings, queries and the email log. Created automatically, so back it up. |
+| `tests/` | End-to-end tests (`npm test`) using a local stand-in for Gmail and Stripe. |
+| `Dockerfile`, `ecosystem.config.js` | Docker image and PM2 config for deployment. |
 
-## Run it
+## Run it locally
 
 ```bash
-cp .env.example .env      # then fill in the values
+cp .env.example .env      # fill in the values (NODE_ENV=development for local use)
+npm run check             # validates .env and lists anything missing
+npm test                  # 19 end-to-end tests: pages, orders, Stripe, webhook, email, admin
 node server.js            # http://localhost:3000
 ```
 
-With no Stripe key, the site runs in **test mode**. A banner says so, and the payment step simulates success or failure.
-
+Without a Stripe key, the site runs in **test mode**: a banner says so, and the payment step simulates success or failure.
 To see the dashboard with sample bookings, run `node scripts/seed-demo.js`. **Run `node scripts/seed-demo.js --clear` before launch.**
 
-## Go live checklist
+## Deploy
 
-1. **Stripe**
-   - Activate your account for AED payouts and put `STRIPE_SECRET_KEY` in `.env`. Use `sk_test_...` first, then `sk_live_...`.
-   - Add a webhook to `https://<domain>/api/webhooks/stripe` for `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed` and `checkout.session.expired`.
-   - Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
-2. **Gmail**
-   - Turn on 2-Step Verification for connect.technow@gmail.com.
-   - Create an **App password** and set `SMTP_PASS`.
-3. **Admin:** set a long `ADMIN_PASSWORD`.
-4. **Domain:** set `SITE_URL`. It's used for canonical, Open Graph and sitemap links and for Stripe's return URLs. Serve the site over HTTPS.
-5. **Before taking orders:** the sample's own notice says ticket categories, prices, inventory and seller authorization must be verified first. Its event details are marked * for reconfirmation, and the "Sample website preview" notice should be reworded once the shop is live.
-6. **Capacity:** if the ticket issuer gives you an allocation, set `capacity` per tier in `lib/config.js`. When it's set, checkout stops at the limit and the dashboard shows the % sold.
+Requirements: Node.js 18 or newer, one process, a **persistent disk** for `DATA_DIR`, and HTTPS in front of the app.
+The server refuses to start with a clear message if a setting is wrong, for example an `http://` `SITE_URL` in production or a publishable `pk_` Stripe key.
+
+**Option A: VPS (Ubuntu) with PM2 and Nginx**
+```bash
+git clone https://github.com/Technow-info/Bookmyshow.world.git && cd Bookmyshow.world
+cp .env.example .env && nano .env      # NODE_ENV=production, SITE_URL=https://…, TRUST_PROXY=1
+npm run check && npm test
+npm i -g pm2 && pm2 start ecosystem.config.js && pm2 save && pm2 startup
+```
+Point Nginx (or Caddy) at `http://127.0.0.1:3000` with HTTPS. Example Nginx block:
+```
+server {
+  server_name bookmyshow.world;
+  location / { proxy_pass http://127.0.0.1:3000; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $remote_addr; }
+  listen 443 ssl; # certbot adds the certificate lines
+}
+```
+
+**Option B: Docker**
+```bash
+docker build -t bookmyshow-world .
+docker run -d --name bmsw -p 3000:3000 --env-file .env -v bmsw-data:/data --restart unless-stopped bookmyshow-world
+```
+
+**Option C: Render / Railway / Fly.io**
+Use start command `node server.js`, set the variables from `.env.example` in the dashboard, attach a **persistent disk** mounted at `DATA_DIR` (for example `/data`), and set `TRUST_PROXY=1`. The health check path is `/api/health`.
+
+**After deploying**
+1. Open `https://<domain>/api/health`. It should show `{"ok":true,…}`.
+2. Stripe Dashboard → Webhooks → add `https://<domain>/api/webhooks/stripe` with the 4 events in `.env.example`, then put the signing secret in `STRIPE_WEBHOOK_SECRET`.
+3. Make one test purchase with a Stripe test card (4242 4242 4242 4242). The e-tickets should arrive by email and the booking should show in `/admin/`.
+4. Send a test message from the Contact page. It should appear in the admin Queries inbox and at connect.technow@gmail.com.
+5. Back up `DATA_DIR` daily. It holds `db.json` (bookings, queries) and `.ticket-secret` (the key that signs QR codes).
+
+**Troubleshooting**
+| Symptom | Fix |
+|---|---|
+| Server exits at start with ✖ lines | Fix the listed `.env` settings. Run `npm run check` to re-test. |
+| Emails show "failed" in the Email log | Check the reason shown. Usually it's a wrong App Password, or the host blocks port 465: set `SMTP_PORT=587`. |
+| Paid on Stripe but booking still pending | The webhook isn't reaching the site. Check its URL and `STRIPE_WEBHOOK_SECRET`. Reloading the checkout return page also confirms it. |
+| "db.json is not valid JSON" at start | The file was damaged (for example, the disk filled up). A copy is kept next to it; restore it from backup. |
+| Admin logged out after a deploy | Expected: sessions reset on restart. Sign in again. |
 
 ## How queries and tickets flow
 

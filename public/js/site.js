@@ -104,7 +104,7 @@
       var btn = form.querySelector('button[type="submit"]');
       var data = {};
       new FormData(form).forEach(function (v, k) { data[k] = v; });
-      data.startedAt = started; data.source = form.getAttribute('data-contact');
+      data.elapsed = Date.now() - started; data.source = form.getAttribute('data-contact');
       var bad = null;
       form.querySelectorAll('[required]').forEach(function (f) {
         var ok = f.value.trim() && (f.type !== 'email' || /^\S+@\S+\.\S+$/.test(f.value));
