@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bookings dashboard | Bookmyshow.world admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/css/site.css">
+<link rel="stylesheet" href="/css/admin.css">
+</head>
+<body class="adm">
+  <!-- Login -->
+  <section id="login" class="login" hidden>
+    <form class="card form" id="login-form" novalidate>
+      <a class="logo" href="/">BOOKMYSHOW<em>.WORLD</em></a>
+      <h1 class="h3">Admin sign in</h1>
+      <div><label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="current-password" required></div>
+      <div class="status" role="alert"></div>
+      <button class="btn btn-solid" type="submit"><svg class="icon"><use href="/img/icons.svg#lock"/></svg>Sign in</button>
+    </form>
+  </section>
+
+  <!-- Dashboard -->
+  <div id="app" hidden>
+    <header class="adm-bar">
+      <a class="logo" href="/">BOOKMYSHOW<em>.WORLD</em></a>
+      <span class="adm-title">Bookings dashboard</span>
+      <span class="pill" id="mode-pay"></span>
+      <span class="pill" id="mode-mail"></span>
+      <a class="pill warn" id="tk-warn" href="#bk-title" hidden></a>
+      <span class="spacer"></span>
+      <span class="fine" id="updated"></span>
+      <button class="icon-btn" id="refresh" title="Refresh"><svg class="icon"><use href="/img/icons.svg#refresh"/></svg></button>
+      <a class="icon-btn" href="/api/admin/bookings.csv" title="Export bookings (CSV)"><svg class="icon"><use href="/img/icons.svg#download"/></svg></a>
+      <button class="icon-btn" id="logout" title="Sign out"><svg class="icon"><use href="/img/icons.svg#logout"/></svg></button>
+    </header>
+
+    <main class="adm-main">
+      <section class="hero-kpi" aria-label="Headline numbers">
+        <div class="kpi big"><span class="k-label">Confirmed bookings</span><span class="k-val" id="k-bookings">—</span><span class="k-sub" id="k-bookings-sub"></span></div>
+        <div class="kpi big"><span class="k-label">Passes sold</span><span class="k-val" id="k-tickets">—</span><span class="k-sub" id="k-tickets-sub"></span></div>
+        <div class="kpi big"><span class="k-label">Revenue</span><span class="k-val" id="k-revenue">—</span><span class="k-sub" id="k-revenue-sub"></span></div>
+      </section>
+      <section class="kpis" aria-label="Other numbers">
+        <div class="kpi"><span class="k-label">Today</span><span class="k-val sm" id="k-today">—</span></div>
+        <div class="kpi"><span class="k-label">Avg. order</span><span class="k-val sm" id="k-avg">—</span></div>
+        <div class="kpi"><span class="k-label">Payment success</span><span class="k-val sm" id="k-rate">—</span></div>
+        <div class="kpi"><span class="k-label">Pending / failed</span><span class="k-val sm" id="k-pend">—</span></div>
+        <a class="kpi kpi-link" href="#q-title"><span class="k-label">New queries</span><span class="k-val sm" id="k-queries">—</span></a>
+      </section>
+
+      <section class="charts">
+        <figure class="card chart-card">
+          <figcaption><span class="c-title">Bookings per day</span><span class="c-sub">Confirmed bookings, last 14 days</span></figcaption>
+          <div class="chart" id="chart-days" role="img" aria-label="Bookings per day"></div>
+          <details class="tbl-toggle"><summary>Show as table</summary><div id="days-table"></div></details>
+        </figure>
+        <figure class="card chart-card">
+          <figcaption><span class="c-title">Passes sold by tier</span><span class="c-sub">Passes sold per ticket type</span></figcaption>
+          <div id="chart-tiers"></div>
+        </figure>
+      </section>
+
+      <section class="card" aria-labelledby="bk-title">
+        <div class="tbl-head">
+          <h2 class="h3" id="bk-title">Bookings</h2>
+          <div class="chips" role="radiogroup" aria-label="Filter by status">
+            <button role="radio" aria-checked="true" data-status="all">All</button>
+            <button role="radio" aria-checked="false" data-status="paid">Paid</button>
+            <button role="radio" aria-checked="false" data-status="pending">Pending</button>
+            <button role="radio" aria-checked="false" data-status="failed">Failed</button>
+          </div>
+          <label class="search"><span class="sr-only">Search bookings</span><input id="q" type="search" placeholder="Search name, email, phone, ID…"></label>
+        </div>
+        <div class="tbl-wrap">
+          <table class="schedule adm-table">
+            <thead><tr><th>Booking ID</th><th>Status</th><th>Pass</th><th>Qty</th><th class="num">Amount</th><th>Customer</th><th>Phone</th><th>Created</th><th>E-tickets</th></tr></thead>
+            <tbody id="bk-body"><tr><td colspan="9" class="muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        <p class="fine" id="bk-count"></p>
+      </section>
+
+      <section class="card" aria-labelledby="q-title">
+        <div class="tbl-head"><h2 class="h3" id="q-title">Queries inbox <span class="pill live" id="q-live">Live</span></h2>
+          <div class="chips" role="radiogroup" aria-label="Filter queries">
+            <button role="radio" aria-checked="true" data-qstatus="all">All</button><button role="radio" aria-checked="false" data-qstatus="new">New</button>
+            <button role="radio" aria-checked="false" data-qstatus="replied">Replied</button><button role="radio" aria-checked="false" data-qstatus="closed">Closed</button></div></div>
+        <div id="q-list" class="q-list"><p class="muted">Loading…</p></div>
+      </section>
+
+      <section class="two-col">
+        <div class="card" aria-labelledby="v-title">
+          <h2 class="h3" id="v-title" style="margin-bottom:6px">Check a ticket</h2>
+          <p class="fine" style="margin:0 0 14px">Paste the text from a scanned QR code, or type a ticket number such as BMW-ABC123-01.</p>
+          <form class="form" id="verify-form" style="grid-template-columns:1fr auto;display:grid;gap:10px">
+            <label class="sr-only" for="v-code">Ticket code</label><input id="v-code" placeholder="BMSW1|BMW-…|01|… or BMW-…-01" autocomplete="off">
+            <button class="btn btn-solid" type="submit">Check</button>
+          </form>
+          <div class="status" id="v-out" role="status" aria-live="polite" style="margin-top:12px"></div>
+        </div>
+        <div class="card" aria-labelledby="e-title">
+          <h2 class="h3" id="e-title" style="margin-bottom:14px">Email log</h2>
+          <div id="e-list" class="e-list"><p class="muted">Loading…</p></div>
+        </div>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+  <div class="tip" id="tip" role="tooltip" hidden></div>
+  <script src="/js/admin.js" defer></script>
+</body>
+</html>

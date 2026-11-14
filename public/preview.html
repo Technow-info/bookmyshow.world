@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design review: desktop + phone | Bookmyshow.world</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="/img/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/css/site.css">
+<link rel="stylesheet" href="/css/preview.css">
+</head>
+<body class="pv">
+  <header class="pv-bar">
+    <a class="logo" href="/">BOOKMYSHOW<em>.WORLD</em> <span class="muted" style="letter-spacing:.06em;font-weight:500;font-size:13px">· review</span></a>
+    <label class="pv-page"><span class="sr-only">Page</span>
+      <select id="pv-page">
+        <option value="/">Home</option><option value="/tickets">Tickets</option><option value="/checkout?tier=full-vip">Checkout</option>
+        <option value="/info">Event info</option><option value="/contact">Contact</option><option value="/admin/">Admin dashboard</option>
+      </select>
+    </label>
+    <div class="pv-toggle" role="radiogroup" aria-label="View">
+      <button role="radio" aria-checked="false" data-mode="desktop" class="icon-btn" title="Desktop"><svg class="icon"><use href="/img/icons.svg#desktop"/></svg></button>
+      <button role="radio" aria-checked="true" data-mode="split" class="icon-btn" title="Desktop + phone"><svg class="icon"><use href="/img/icons.svg#split"/></svg></button>
+      <button role="radio" aria-checked="false" data-mode="mobile" class="icon-btn" title="Phone"><svg class="icon"><use href="/img/icons.svg#mobile"/></svg></button>
+    </div>
+    <button class="icon-btn" id="pv-reload" title="Reload both"><svg class="icon"><use href="/img/icons.svg#refresh"/></svg></button>
+  </header>
+  <main class="pv-stage" data-mode="split">
+    <figure class="pv-desktop">
+      <div class="pv-chrome"><i></i><i></i><i></i><span id="pv-url">/</span></div>
+      <div class="pv-desk-viewport"><iframe id="f-desk" title="Desktop view" src="/"></iframe></div>
+      <figcaption>Desktop · 1440 px</figcaption>
+    </figure>
+    <figure class="pv-phone">
+      <div class="pv-device"><div class="pv-notch"></div><iframe id="f-phone" title="Phone view" src="/"></iframe></div>
+      <figcaption>Phone · 390 px wide</figcaption>
+    </figure>
+  </main>
+  <script src="/js/preview.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "bookmyshow-world",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bookmyshow.world festival ticket site with Stripe (AED) checkout, Gmail contact form and admin bookings dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed:demo": "node scripts/seed-demo.js",
+    "seed:clear": "node scripts/seed-demo.js --clear"
+  },
+  "engines": { "node": ">=18" }
+}
