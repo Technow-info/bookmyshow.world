@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const http = require('http');
 
 const FIX = path.join(__dirname, 'fixtures');
 const key = fs.readFileSync(path.join(FIX, 'test-key.pem'));
@@ -58,31 +59,75 @@ function fakeSmtp({ starttls = false } = {}) {
   })));
 }
 
-// ---------- fake Stripe API ----------
-function fakeStripe() {
-  const sessions = new Map();
-  const server = require('https').createServer({ key, cert }, (req, res) => {
+// ---------- fake Ziina API (http, same paths as https://api-v2.ziina.com/api) ----------
+function fakeZiina() {
+  const intents = new Map();
+  const calls = [];
+  let down = false;
+  const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
-      if (!/^Bearer sk_test_/.test(req.headers.authorization || '')) return json(401, { error: { message: 'bad key' } });
-      if (req.method === 'POST' && req.url === '/v1/checkout/sessions') {
-        const params = new URLSearchParams(body);
-        const id = 'cs_test_' + crypto.randomBytes(6).toString('hex');
-        const s = { id, url: 'https://checkout.stripe.test/' + id, status: 'open', payment_status: 'unpaid', payment_intent: null, params: Object.fromEntries(params) };
-        sessions.set(id, s);
-        return json(200, s);
+      if (down) return json(503, { message: 'maintenance' });
+      if (!/^Bearer zt_/.test(req.headers.authorization || '')) return json(401, { message: 'Unauthorized' });
+      calls.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
+      if (req.method === 'POST' && req.url === '/api/payment_intent') {
+        const p = JSON.parse(body);
+        if (!Number.isInteger(p.amount) || p.amount < 200) return json(400, { message: 'amount must be at least 2 AED' });
+        const id = crypto.randomUUID();
+        const it = { id, account_id: 'acc_1', amount: p.amount, tip_amount: 0, vat_amount: 0, currency_code: p.currency_code, status: 'requires_payment_instrument',
+          message: p.message, success_url: p.success_url, cancel_url: p.cancel_url, failure_url: p.failure_url, test: p.test, expiry: p.expiry,
+          redirect_url: `https://pay.ziina.test/payment_intent/${id}`, created_at: String(Date.now()), operation_id: crypto.randomUUID() };
+        intents.set(id, it);
+        return json(201, it);
       }
-      const m = /^\/v1\/checkout\/sessions\/([^/?]+)$/.exec(req.url);
-      if (req.method === 'GET' && m && sessions.has(m[1])) return json(200, sessions.get(m[1]));
-      return json(404, { error: { message: 'not found' } });
+      const m = /^\/api\/payment_intent\/([^/?]+)$/.exec(req.url);
+      if (req.method === 'GET' && m) return intents.has(m[1]) ? json(200, intents.get(m[1])) : json(404, { message: 'not found' });
+      if (req.method === 'POST' && req.url === '/api/webhook') return json(201, { success: true });
+      return json(404, { message: 'not found' });
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
-    port: server.address().port, sessions,
-    pay(id) { const s = sessions.get(id); s.status = 'complete'; s.payment_status = 'paid'; s.payment_intent = 'pi_test_' + crypto.randomBytes(4).toString('hex'); return s; },
-    close: () => new Promise((r) => server.close(() => r())),
+    base: `http://127.0.0.1:${server.address().port}/api`, intents, calls,
+    set(id, status, extra = {}) { Object.assign(intents.get(id), { status }, extra); return intents.get(id); },
+    last() { return [...intents.values()].at(-1); },
+    setDown(v) { down = v; },
+    close: () => new Promise((r) => { server.closeAllConnections && server.closeAllConnections(); server.close(() => r()); }),
+  })));
+}
+
+// ---------- fake Upstash Redis REST API ----------
+function fakeRedis() {
+  const data = new Map(); // key -> string | Map (hash)
+  const run = (c) => {
+    const [cmd, ...a] = c; const C = String(cmd).toUpperCase();
+    const hash = (k) => { if (!data.has(k)) data.set(k, new Map()); return data.get(k); };
+    if (C === 'PING') return 'PONG';
+    if (C === 'HSET') { const h = hash(a[0]); let n = 0; for (let i = 1; i < a.length; i += 2) { if (!h.has(a[i])) n++; h.set(a[i], a[i + 1]); } return n; }
+    if (C === 'HGET') { const h = data.get(a[0]); return h && h.has(a[1]) ? h.get(a[1]) : null; }
+    if (C === 'HGETALL') { const h = data.get(a[0]); const out = []; if (h) for (const [k, v] of h) out.push(k, v); return out; }
+    if (C === 'HDEL') { const h = data.get(a[0]); let n = 0; if (h) for (const f of a.slice(1)) if (h.delete(f)) n++; return n; }
+    if (C === 'SET') { if (a.includes('NX') && data.has(a[0])) return null; data.set(a[0], a[1]); return 'OK'; }
+    if (C === 'GET') { const v = data.get(a[0]); return typeof v === 'string' ? v : null; }
+    throw new Error('ERR unknown command ' + C);
+  };
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+      if (req.headers.authorization !== 'Bearer redis-test-token') return json(401, { error: 'Unauthorized' });
+      try {
+        const parsed = JSON.parse(body);
+        if (req.url === '/pipeline') return json(200, parsed.map((c) => { try { return { result: run(c) }; } catch (e) { return { error: e.message }; } }));
+        return json(200, { result: run(parsed) });
+      } catch (e) { return json(400, { error: e.message }); }
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
+    url: `http://127.0.0.1:${server.address().port}`, token: 'redis-test-token', data,
+    close: () => new Promise((r) => { server.closeAllConnections && server.closeAllConnections(); server.close(() => r()); }),
   })));
 }
 
@@ -91,7 +136,7 @@ function freePort() {
   return new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 }
 
-async function launch(env = {}, { expectExit = false } = {}) {
+async function launch(env = {}, { expectExit = false, vercel = false } = {}) {
   const dataDir = env.DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'bmsw-test-'));
   const port = await freePort();
   const childEnv = {
@@ -99,7 +144,12 @@ async function launch(env = {}, { expectExit = false } = {}) {
     PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, SITE_URL: `http://localhost:${port}`,
     ADMIN_PASSWORD: 'correct-horse-battery', NODE_ENV: 'test', ...env,
   };
-  const child = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  // vercel: serve through api/index.js exactly as Vercel does (handler only, no start-up code, VERCEL=1)
+  const args = vercel
+    ? ['-e', `require('http').createServer(require('./api/index.js')).listen(${port}, '127.0.0.1', () => console.log('running on port ${port}'))`]
+    : ['server.js'];
+  if (vercel) childEnv.VERCEL = '1';
+  const child = spawn(process.execPath, args, { cwd: ROOT, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (out += d));
   const exited = new Promise((r) => child.on('exit', (code) => r(code)));
@@ -135,4 +185,4 @@ const waitFor = async (fn, ms = 4000) => {
   throw new Error('timed out waiting');
 };
 
-module.exports = { fakeSmtp, fakeStripe, launch, waitFor, ROOT };
+module.exports = { fakeSmtp, fakeZiina, fakeRedis, launch, waitFor, ROOT };

@@ -1,4 +1,4 @@
-// Checkout: Select pass → Quantity & details → Review → Pay (Stripe hosted checkout) → Success / Failure
+// Checkout: Select pass → Quantity & details → Review → Pay (Ziina hosted payment page) → Success / Failure
 (function () {
   'use strict';
   var state = { tiers: [], days: [], tier: null, qty: 1, max: 10, testMode: true, booking: null, buyer: null, want: null };
@@ -105,7 +105,7 @@
         state.booking = order;
         store.set(order.bookingId, { token: order.token, email: state.buyer.email });
         if (order.testMode) return testPay(order);
-        processing('Taking you to Stripe’s secure payment page…');
+        processing('Taking you to Ziina’s secure payment page…');
         window.location.href = order.checkoutUrl;
       })
       .catch(function (e) { fail(e.message); });
@@ -133,7 +133,7 @@
     $('#pay-body').innerHTML =
       '<div class="testpay"><p class="eyebrow">Test mode: no money moves</p>' +
       '<h2 class="h3">Simulated payment of <span id="tp-amt"></span></h2>' +
-      '<p class="muted">No Stripe key is configured on the server yet, so this step stands in for Stripe\'s payment page. Add STRIPE_SECRET_KEY to .env to take real payments.</p>' +
+      '<p class="muted">No Ziina API key is configured on the server yet, so this step stands in for Ziina\'s payment page. Add ZIINA_API_KEY to the server settings to take real payments.</p>' +
       '<div class="actions"><button class="btn btn-solid" id="tp-ok">Simulate success</button><button class="btn btn-outline" id="tp-fail">Simulate failure</button></div></div>';
     $('#tp-amt').textContent = order.amountLabel;
     $('#tp-ok').onclick = function () { verify(order.bookingId, order.token, { testOutcome: 'success' }, state.buyer.email); };
@@ -173,15 +173,15 @@
     $('#retry').onclick = function () { if (state.tier && state.buyer) show('step-review'); else window.location.href = '/checkout'; };
   }
 
-  // Returning from Stripe: /checkout?b=<booking>&return=success|cancel
+  // Returning from Ziina: /checkout?b=<booking>&return=success|cancel|failure
   var back = params.get('b'), ret = params.get('return');
   if (back && ret) {
     var saved = store.get(back);
     history.replaceState(null, '', '/checkout');
     if (!saved) {
-      ret === 'success' ? pendingNote(back) : fail('Checkout was cancelled.');
+      ret === 'success' ? pendingNote(back) : fail(ret === 'failure' ? 'Your payment did not go through.' : 'Checkout was cancelled.');
     } else if (ret === 'success') verify(back, saved.token, {}, saved.email);
-    else verify(back, saved.token, { failed: true, reason: 'Checkout cancelled' }, saved.email);
+    else verify(back, saved.token, { failed: true, reason: ret === 'failure' ? 'Payment failed' : 'Checkout cancelled' }, saved.email);
   }
 
   // Used by the single-page preview build

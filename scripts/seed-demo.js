@@ -1,14 +1,26 @@
 'use strict';
-// Fills data/db.json with SAMPLE bookings and queries so you can preview the admin dashboard.
-// For local review only. Run `node scripts/seed-demo.js --clear` (or delete data/db.json) before going live.
+// Adds SAMPLE bookings and queries so you can preview the admin dashboard (file storage or Redis).
+// For local review only. Sample records are marked "sample": true.
+// Remove them before going live:  node scripts/seed-demo.js --clear
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const config = require('../lib/config');
 const tickets = require('../lib/tickets');
-const file = path.join(config.dataDir, 'db.json');
-fs.mkdirSync(config.dataDir, { recursive: true });
-if (process.argv.includes('--clear')) { fs.writeFileSync(file, JSON.stringify({ bookings: [], queries: [], emails: [] }, null, 2)); console.log('Cleared', file); process.exit(0); }
+const store = require('../lib/store');
+
+async function clear() {
+  if (store.kind === 'file') {
+    const file = path.join(config.dataDir, 'db.json');
+    if (fs.existsSync(file)) {
+      const db = JSON.parse(fs.readFileSync(file, 'utf8'));
+      ['bookings', 'queries'].forEach((k) => { db[k] = (db[k] || []).filter((x) => !x.sample); });
+      fs.writeFileSync(file, JSON.stringify(db, null, 2));
+    }
+    return console.log('Removed sample records from', file);
+  }
+  console.log('Redis: remove sample records from the admin view by filtering "sample": true, or flush the bmsw:* keys in the Upstash console.');
+}
 
 const names = ['Aarav Menon', 'Diya Nair', 'Rohan Pillai', 'Ananya Iyer', 'Kabir Thomas', 'Meera Joseph', 'Arjun Varma', 'Sara George', 'Nikhil Das', 'Fatima Rahman', 'Vivek Kurian', 'Isha Reddy'];
 const rand = (n) => Math.floor(Math.random() * n);
@@ -31,12 +43,18 @@ for (let i = 0; i < 140; i++) {
     ...(status === 'failed' ? { failReason: 'Test payment declined' } : {}),
   });
 }
-bookings.forEach((b) => { if (b.status === 'paid') { b.tickets = tickets.issue(b).map(({ n, code }) => ({ n, code })); b.ticketEmail = { status: 'sent', at: b.paidAt }; } });
+async function main() {
+  if (process.argv.includes('--clear')) return clear();
+  await store.init(); await tickets.init(store);
+  bookings.forEach((b) => { b.sample = true; if (b.status === 'paid') { b.tickets = tickets.issue(b).map(({ n, code }) => ({ n, code })); b.ticketEmail = { status: 'sent', at: b.paidAt }; } });
 bookings.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 const queries = [
   { subject: 'Full Madness Comfort (VIP) Pass', message: 'We are a group of 6. Can we book all VIP passes in one payment?' },
   { subject: 'Day Pass', message: 'Which day is best for a first-time visitor?' },
   { subject: 'Payment', message: 'My card was charged but I did not receive the confirmation email.' },
 ].map((q, i) => ({ id: 'Q-SAMPLE' + i, name: names[i + 3], email: names[i + 3].toLowerCase().replace(/\s+/g, '.') + '@example.com', phone: '', createdAt: new Date(Date.now() - i * 5 * 3600e3).toISOString(), status: i === 2 ? 'replied' : 'new', source: 'contact', sample: true, ...q }));
-fs.writeFileSync(file, JSON.stringify({ bookings, queries, emails: [] }, null, 2));
-console.log(`Wrote ${bookings.length} sample bookings and ${queries.length} sample queries to ${file}`);
+  for (const b of bookings) await store.saveBooking(b);
+  for (const q of queries) await store.saveQuery(q);
+  console.log(`Added ${bookings.length} sample bookings and ${queries.length} sample queries to ${store.describe()}`);
+}
+main().catch((e) => { console.error(e.message); process.exit(1); });

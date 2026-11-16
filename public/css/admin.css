@@ -118,3 +118,4 @@
   #verify-form { grid-template-columns: 1fr !important; }
   .toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
 }
+.pill.bad{border-color:var(--err-400);color:var(--err-400);background:rgba(255,138,122,.1)}

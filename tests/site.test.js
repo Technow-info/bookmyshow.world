@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { fakeSmtp, fakeStripe, launch, waitFor } = require('./helpers');
+const { fakeSmtp, fakeZiina, fakeRedis, launch, waitFor } = require('./helpers');
 
 const buyer = { name: 'Omar Haddad', email: 'omar@example.com', phone: '+971 50 111 2233' };
 const decodeB64Part = (raw, type) => {
@@ -17,7 +17,7 @@ describe('Bookmyshow.world server (test-mode payments, Gmail via fake SMTP)', ()
   let smtp, app;
   before(async () => {
     smtp = await fakeSmtp();
-    app = await launch({ SMTP_HOST: 'localhost', SMTP_PORT: String(smtp.port), SMTP_SECURE: 'true', SMTP_USER: 'connect.technow@gmail.com', SMTP_PASS: 'abcdefghijklmnop', MAIL_TO: 'connect.technow@gmail.com', STRIPE_WEBHOOK_SECRET: 'whsec_testsecret' });
+    app = await launch({ SMTP_HOST: 'localhost', SMTP_PORT: String(smtp.port), SMTP_SECURE: 'true', SMTP_USER: 'connect.technow@gmail.com', SMTP_PASS: 'abcdefghijklmnop', MAIL_TO: 'connect.technow@gmail.com' });
   });
   after(async () => { if (app) await app.stop(); if (smtp) await smtp.close(); });
 
@@ -165,14 +165,6 @@ describe('Bookmyshow.world server (test-mode payments, Gmail via fake SMTP)', ()
     assert.equal((await app.req('GET', '/api/admin/stats')).status, 401);
   });
 
-  it('checks Stripe webhook signatures', async () => {
-    const body = JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: 'cs_unknown', payment_status: 'paid' } } });
-    assert.equal((await app.req('POST', '/api/webhooks/stripe', body, { 'Stripe-Signature': 't=1,v1=bad' })).status, 400);
-    const t = Math.floor(Date.now() / 1000);
-    const sig = crypto.createHmac('sha256', 'whsec_testsecret').update(`${t}.${body}`).digest('hex');
-    assert.equal((await app.req('POST', '/api/webhooks/stripe', body, { 'Stripe-Signature': `t=${t},v1=${sig}` })).status, 200);
-  });
-
   it('rate-limits the contact form', async () => {
     let last;
     for (let i = 0; i < 6; i++) last = await app.req('POST', '/api/contact', { name: 'Rate Test', email: 'r@example.com', message: 'testing limits', elapsed: 9000 });
@@ -184,53 +176,154 @@ describe('Bookmyshow.world server (test-mode payments, Gmail via fake SMTP)', ()
     assert.equal(code, 0);
     const saved = JSON.parse(fs.readFileSync(path.join(app.dataDir, 'db.json'), 'utf8'));
     assert.ok(saved.bookings.some((b) => b.id === paid.bookingId && b.status === 'paid'));
-    assert.ok(fs.existsSync(path.join(app.dataDir, '.ticket-secret')));
+    assert.match(saved.meta['ticket-secret'], /^[0-9a-f]{64}$/, 'ticket signing key kept in storage');
   });
 });
 
-describe('Stripe checkout (fake Stripe API)', () => {
-  let stripe, app;
+const ZKEY = 'zt_' + 'x'.repeat(40);
+const ziinaSign = (body, secret) => crypto.createHmac('sha256', secret).update(body).digest('hex');
+
+describe('Ziina checkout (fake Ziina API)', () => {
+  let z, smtp, app;
   before(async () => {
-    stripe = await fakeStripe();
-    app = await launch({ STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: 'whsec_stripetest', STRIPE_API_HOST: 'localhost', STRIPE_API_PORT: String(stripe.port) });
+    z = await fakeZiina(); smtp = await fakeSmtp();
+    app = await launch({ ZIINA_API_KEY: ZKEY, ZIINA_TEST_MODE: 'true', ZIINA_WEBHOOK_SECRET: 'zsecret', ZIINA_API_BASE: z.base,
+      SMTP_HOST: 'localhost', SMTP_PORT: String(smtp.port), SMTP_SECURE: 'true', SMTP_USER: 'connect.technow@gmail.com', SMTP_PASS: 'abcdefghijklmnop' });
   });
-  after(async () => { if (app) await app.stop(); });
+  after(async () => { if (app) await app.stop(); if (z) await z.close(); if (smtp) await smtp.close(); });
 
-  it('creates an AED Checkout Session with server-side prices', async () => {
-    const o = await app.req('POST', '/api/orders', { ...buyer, tierId: 'full-vip', qty: 2 });
+  it('creates an AED payment intent with server-side prices and return links', async () => {
+    const t = await app.req('GET', '/api/tiers');
+    assert.equal(t.json.testMode, false); assert.equal(t.json.gateway, 'Ziina');
+    const o = await app.req('POST', '/api/orders', { ...buyer, tierId: 'full-vip', qty: 2, price: 1 });
     assert.equal(o.status, 201); assert.equal(o.json.testMode, false);
-    assert.match(o.json.checkoutUrl, /^https:\/\/checkout\.stripe\.test\//);
-    const s = [...stripe.sessions.values()].at(-1);
-    assert.equal(s.params['line_items[0][price_data][currency]'], 'aed');
-    assert.equal(s.params['line_items[0][price_data][unit_amount]'], '219664');
-    assert.equal(s.params['line_items[0][quantity]'], '2');
-    assert.match(s.params.success_url, /\/checkout\?b=BMW-.+&return=success$/);
+    const it = z.last();
+    assert.equal(o.json.checkoutUrl, it.redirect_url);
+    assert.equal(it.amount, 439328, 'AED 2,196.64 × 2 in fils'); assert.equal(it.currency_code, 'AED'); assert.equal(it.test, true);
+    assert.match(it.success_url, new RegExp(`/checkout\\?b=${o.json.bookingId}&return=success$`));
+    assert.match(it.cancel_url, /&return=cancel$/); assert.match(it.failure_url, /&return=failure$/);
+    assert.ok(Number(it.expiry) > Date.now(), 'expiry in the future');
+    assert.match(it.message, /Full Madness Comfort \(VIP\) Pass × 2/);
+    globalThis.zo = o.json;
+  });
 
-    // Unpaid: stays pending. Test payments are refused when Stripe is on.
-    assert.equal((await app.req('POST', `/api/orders/${o.json.bookingId}/verify`, { token: o.json.token })).json.status, 'pending');
-    assert.equal((await app.req('POST', `/api/orders/${o.json.bookingId}/verify`, { token: o.json.token, testOutcome: 'success' })).json.status, 'pending');
-    // Paid on Stripe → verified by asking Stripe, never trusting the browser
-    stripe.pay(s.id);
-    const v = await app.req('POST', `/api/orders/${o.json.bookingId}/verify`, { token: o.json.token });
-    assert.equal(v.json.status, 'paid');
+  it('only marks paid after Ziina itself says completed, then emails the e-tickets', async () => {
+    const o = globalThis.zo; const it = z.last();
+    assert.equal((await app.req('POST', `/api/orders/${o.bookingId}/verify`, { token: o.token })).json.status, 'pending');
+    assert.equal((await app.req('POST', `/api/orders/${o.bookingId}/verify`, { token: o.token, testOutcome: 'success' })).json.status, 'pending', 'simulated payments refused');
+    z.set(it.id, 'requires_user_action');
+    assert.equal((await app.req('POST', `/api/orders/${o.bookingId}/verify`, { token: o.token })).json.status, 'pending', '3-D Secure still running');
+    z.set(it.id, 'completed');
+    const v = await app.req('POST', `/api/orders/${o.bookingId}/verify`, { token: o.token });
+    assert.equal(v.json.status, 'paid'); assert.match(v.json.ticketUrl, /^\/ticket\?b=/);
+    const mail = await waitFor(() => smtp.mails.find((x) => x.to.includes(buyer.email)));
+    assert.equal((mail.raw.match(/Content-ID: <qr-\d@bmsw>/g) || []).length, 2);
+  });
+
+  it('records cancelled and failed Ziina payments', async () => {
+    const a = await app.req('POST', '/api/orders', { ...buyer, tierId: 'full', qty: 1 });
+    assert.equal((await app.req('POST', `/api/orders/${a.json.bookingId}/verify`, { token: a.json.token, failed: true, reason: 'Checkout cancelled' })).json.status, 'failed');
+    const b = await app.req('POST', '/api/orders', { ...buyer, tierId: 'full', qty: 1 });
+    z.set(z.last().id, 'failed', { latest_error: { message: 'Card declined', code: 'card_declined' } });
+    assert.equal((await app.req('POST', `/api/orders/${b.json.bookingId}/verify`, { token: b.json.token })).json.status, 'failed');
+    const c = await app.req('POST', '/api/orders', { ...buyer, tierId: 'full', qty: 1 });
+    z.set(z.last().id, 'completed');
+    assert.equal((await app.req('POST', `/api/orders/${c.json.bookingId}/verify`, { token: c.json.token, failed: true })).json.status, 'paid', 'a cancel link never overrides a real payment');
   });
 
   it('confirms a payment from the webhook alone (buyer closed the tab)', async () => {
     const o = await app.req('POST', '/api/orders', { ...buyer, tierId: 'day', day: '2026-12-11', qty: 1 });
-    const s = [...stripe.sessions.values()].at(-1);
-    const paidSession = stripe.pay(s.id);
-    const body = JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: paidSession.id, payment_status: 'paid', payment_intent: paidSession.payment_intent } } });
-    const t = Math.floor(Date.now() / 1000);
-    const sig = crypto.createHmac('sha256', 'whsec_stripetest').update(`${t}.${body}`).digest('hex');
-    assert.equal((await app.req('POST', '/api/webhooks/stripe', body, { 'Stripe-Signature': `t=${t},v1=${sig}` })).status, 200);
-    const st = await app.req('GET', `/api/orders/${o.json.bookingId}?t=${o.json.token}`);
-    assert.equal(st.json.status, 'paid');
+    const it = z.set(z.last().id, 'completed');
+    const body = JSON.stringify({ event: 'payment_intent.status.updated', data: { ...it } });
+    assert.equal((await app.req('POST', '/api/webhooks/ziina', body, { 'X-Hmac-Signature': 'bad' })).status, 401);
+    assert.equal((await app.req('POST', '/api/webhooks/ziina', body, { 'X-Hmac-Signature': ziinaSign(body, 'zsecret') })).status, 200);
+    assert.equal((await app.req('GET', `/api/orders/${o.json.bookingId}?t=${o.json.token}`)).json.status, 'paid');
   });
 
-  it('reports a clear error when Stripe is unreachable', async () => {
-    await stripe.close();
+  it('never trusts a webhook body: a forged "completed" for an unpaid intent changes nothing', async () => {
+    const o = await app.req('POST', '/api/orders', { ...buyer, tierId: 'day', day: '2026-12-12', qty: 1 });
+    const it = z.last(); // still requires_payment_instrument at Ziina
+    const body = JSON.stringify({ event: 'payment_intent.status.updated', data: { ...it, status: 'completed' } });
+    assert.equal((await app.req('POST', '/api/webhooks/ziina', body, { 'X-Hmac-Signature': ziinaSign(body, 'zsecret') })).status, 200);
+    assert.equal((await app.req('GET', `/api/orders/${o.json.bookingId}?t=${o.json.token}`)).json.status, 'pending');
+    const other = JSON.stringify({ event: 'refund.status.updated', data: { id: 'r1' } });
+    assert.equal((await app.req('POST', '/api/webhooks/ziina', other, { 'X-Hmac-Signature': ziinaSign(other, 'zsecret') })).json.ignored, true);
+  });
+
+  it('lets admin re-check a pending Ziina payment', async () => {
     const o = await app.req('POST', '/api/orders', { ...buyer, tierId: 'full', qty: 1 });
-    assert.equal(o.status, 502); assert.match(o.json.error, /Payment service/);
+    z.set(z.last().id, 'completed');
+    await app.req('POST', '/api/admin/login', { password: 'correct-horse-battery' });
+    const r = await app.req('POST', `/api/admin/bookings/${o.json.bookingId}/sync`);
+    assert.equal(r.json.status, 'paid');
+    const s = await app.req('GET', '/api/admin/stats');
+    assert.equal(s.json.mode.payments, 'ziina-test'); assert.equal(s.json.mode.gateway, 'Ziina');
+  });
+
+  it('reports a clear error when Ziina is down, and asks Ziina to retry webhooks', async () => {
+    const o = await app.req('POST', '/api/orders', { ...buyer, tierId: 'full', qty: 1 });
+    const it = z.last();
+    z.setDown(true);
+    const bad = await app.req('POST', '/api/orders', { ...buyer, tierId: 'full', qty: 1 });
+    assert.equal(bad.status, 502); assert.match(bad.json.error, /Payment service/);
+    assert.equal((await app.req('POST', `/api/orders/${o.json.bookingId}/verify`, { token: o.json.token })).status, 502);
+    const body = JSON.stringify({ event: 'payment_intent.status.updated', data: { id: it.id } });
+    assert.equal((await app.req('POST', '/api/webhooks/ziina', body, { 'X-Hmac-Signature': ziinaSign(body, 'zsecret') })).status, 502);
+    z.setDown(false);
+  });
+});
+
+describe('Vercel mode with Upstash Redis', () => {
+  let redis, smtp, z, a, b;
+  before(async () => {
+    redis = await fakeRedis(); smtp = await fakeSmtp(); z = await fakeZiina();
+    const env = { UPSTASH_REDIS_REST_URL: redis.url, UPSTASH_REDIS_REST_TOKEN: redis.token, ZIINA_API_KEY: ZKEY, ZIINA_API_BASE: z.base,
+      SMTP_HOST: 'localhost', SMTP_PORT: String(smtp.port), SMTP_SECURE: 'true', SMTP_USER: 'connect.technow@gmail.com', SMTP_PASS: 'abcdefghijklmnop' };
+    a = await launch(env, { vercel: true }); // two copies of the site sharing one Redis, like Vercel
+    b = await launch(env, { vercel: true });
+  });
+  after(async () => { for (const x of [a, b]) if (x) await x.stop(); for (const x of [redis, smtp, z]) if (x) await x.close(); });
+
+  it('serves pages through api/index.js', async () => {
+    assert.equal((await a.req('GET', '/')).status, 200);
+    assert.equal((await a.req('GET', '/tickets')).status, 200);
+    assert.equal((await a.req('GET', '/api/health')).json.storage, 'redis');
+  });
+
+  it('shares bookings, queries and the ticket key between server copies', async () => {
+    const o = await a.req('POST', '/api/orders', { ...buyer, tierId: 'day-vip', day: '2026-12-13', qty: 1 });
+    z.set(z.last().id, 'completed');
+    const v = await b.req('POST', `/api/orders/${o.json.bookingId}/verify`, { token: o.json.token }); // other copy confirms
+    assert.equal(v.json.status, 'paid');
+    // On serverless the e-ticket email has already been sent when the response arrives
+    assert.ok(smtp.mails.some((m) => m.to.includes(buyer.email)), 'ticket emailed before the response');
+    const page = await a.req('GET', v.json.ticketUrl);
+    assert.equal(page.status, 200);
+    assert.ok(redis.data.get('bmsw:bookings').has(o.json.bookingId), 'stored in Redis');
+    assert.ok(redis.data.get('bmsw:meta:ticket-secret'), 'one shared ticket key');
+
+    const q = await b.req('POST', '/api/contact', { name: 'Vercel Visitor', email: 'v@example.com', message: 'Hello from Vercel', elapsed: 9000 });
+    assert.equal(q.status, 200);
+    assert.ok(smtp.mails.some((m) => decodeB64Part(m.raw, 'text/html').includes('Vercel Visitor')), 'query emailed before the response');
+
+    // Admin: sign in on copy A, use the cookie on copy B (stateless sessions)
+    await a.req('POST', '/api/admin/login', { password: 'correct-horse-battery' });
+    const cookieHeader = { Cookie: 'bmsw_admin=' + (await (async () => { const r = await fetch(a.base + '/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'correct-horse-battery' }) }); return r.headers.get('set-cookie').split(';')[0].split('=')[1]; })()) };
+    const qs = await b.req('GET', '/api/admin/queries', undefined, cookieHeader);
+    assert.equal(qs.status, 200); assert.equal(qs.json.queries[0].name, 'Vercel Visitor');
+    const st = await b.req('GET', '/api/admin/stats', undefined, cookieHeader);
+    assert.equal(st.json.mode.storage, 'redis'); assert.equal(st.json.mode.storageWarning, false);
+    const code = (await b.req('GET', `/api/admin/bookings?q=${o.json.bookingId}`, undefined, cookieHeader)).json.bookings[0].tickets[0].code;
+    assert.equal((await a.req('GET', `/api/admin/tickets/verify?code=${encodeURIComponent(code)}`, undefined, cookieHeader)).json.valid, true);
+  });
+
+  it('warns in admin when Vercel runs without Redis', async () => {
+    const c = await launch({}, { vercel: true });
+    try {
+      await c.req('POST', '/api/admin/login', { password: 'correct-horse-battery' });
+      const st = await c.req('GET', '/api/admin/stats');
+      assert.equal(st.json.mode.storage, 'file'); assert.equal(st.json.mode.storageWarning, true);
+    } finally { await c.stop(); }
   });
 });
 
@@ -268,9 +361,9 @@ describe('Startup safety checks', () => {
     const r = await launch({ NODE_ENV: 'production', SITE_URL: 'http://bookmyshow.world' }, { expectExit: true });
     assert.equal(r.code, 1); assert.match(r.out, /SITE_URL must start with https/);
   });
-  it('refuses a publishable Stripe key', async () => {
-    const r = await launch({ STRIPE_SECRET_KEY: 'pk_live_abc' }, { expectExit: true });
-    assert.equal(r.code, 1); assert.match(r.out, /does not look like a Stripe secret key/);
+  it('refuses an incomplete Ziina API key', async () => {
+    const r = await launch({ ZIINA_API_KEY: 'abc123' }, { expectExit: true });
+    assert.equal(r.code, 1); assert.match(r.out, /ZIINA_API_KEY looks too short/);
   });
   it('never overwrites a damaged database', async () => {
     const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'bmsw-bad-'));

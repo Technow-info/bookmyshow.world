@@ -2,14 +2,15 @@
   "name": "bookmyshow-world",
   "version": "1.0.0",
   "private": true,
-  "description": "Bookmyshow.world festival ticket site with Stripe (AED) checkout, Gmail contact form and admin bookings dashboard",
+  "description": "Bookmyshow.world festival ticket site with Ziina (AED) checkout, Gmail contact form, QR e-tickets and admin dashboard",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "seed:demo": "node scripts/seed-demo.js",
     "seed:clear": "node scripts/seed-demo.js --clear",
     "test": "node --test tests/site.test.js",
-    "check": "node -e \"const c=require('./lib/config').validate();c.warnings.forEach(w=>console.warn('warn: '+w));c.errors.forEach(e=>console.error('error: '+e));process.exit(c.errors.length?1:0)\""
+    "check": "node -e \"const c=require('./lib/config').validate();c.warnings.forEach(w=>console.warn('warn: '+w));c.errors.forEach(e=>console.error('error: '+e));process.exit(c.errors.length?1:0)\"",
+    "ziina:webhook": "node scripts/ziina-webhook.js"
   },
   "engines": {
     "node": ">=18"

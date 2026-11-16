@@ -57,8 +57,10 @@
     $('#k-pend').textContent = t.pending + ' / ' + t.failed;
     $('#k-queries').textContent = t.newQueries;
     var mp = $('#mode-pay'), mm = $('#mode-mail');
-    mp.textContent = s.mode.payments === 'live' ? 'Payments live' : 'Payments: test mode';
+    mp.textContent = s.mode.payments === 'live' ? 'Ziina live' : s.mode.payments === 'ziina-test' ? 'Ziina test payments' : 'Payments: simulated';
     mp.className = 'pill ' + (s.mode.payments === 'live' ? 'good' : 'warn');
+    var sw = $('#store-warn');
+    if (sw) { sw.hidden = !s.mode.storageWarning; sw.textContent = 'Storage is temporary: connect Upstash Redis or bookings will be lost'; }
     mm.textContent = s.mode.mail === 'on' ? 'Gmail on' : 'Gmail off';
     mm.className = 'pill ' + (s.mode.mail === 'on' ? 'good' : 'warn');
     var tw = $('#tk-warn'); tw.hidden = !t.ticketsPending;
@@ -123,6 +125,7 @@
   var ICON = { simulated: 'check', paid: 'check', pending: 'clock', failed: 'x', sent: 'check', skipped: 'clock', sending: 'clock' };
   var TK_LABEL = { simulated: 'Emailed (preview)', sent: 'Emailed', failed: 'Email failed', skipped: 'Not sent (mail off)', sending: 'Sending…' };
   function ticketCell(b) {
+    if (b.status === 'pending' && b.gateway === 'ziina') return '<div class="tk-cell"><button class="icon-btn" data-sync="' + esc(b.id) + '" title="Re-check this payment with Ziina"><svg class="icon"><use href="/img/icons.svg#refresh"/></svg></button><span class="fine">Re-check</span></div>';
     if (b.status !== 'paid') return '<span class="muted">—</span>';
     var st = (b.ticketEmail && b.ticketEmail.status) || 'sending';
     var title = b.ticketEmail && b.ticketEmail.error ? ' title="' + esc(b.ticketEmail.error) + '"' : '';
@@ -144,6 +147,15 @@
       var n = Math.min(shown, r.bookings.length);
       $('#bk-count').innerHTML = 'Showing ' + n + ' of ' + r.total + ' bookings' + (n < r.bookings.length ? ' · <button class="btn btn-outline" id="more" style="padding:8px 16px;font-size:12px">Show 25 more</button>' : '');
       var more = $('#more'); if (more) more.onclick = function () { shown += PAGE; loadBookings(); };
+      body.querySelectorAll('[data-sync]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          api('/api/admin/bookings/' + encodeURIComponent(btn.dataset.sync) + '/sync', { method: 'POST' })
+            .then(function (x) { toast('Ziina says: ' + x.status + ' (' + btn.dataset.sync + ')'); })
+            .catch(function (e) { if (e.message !== 'auth') toast('Re-check failed: ' + e.message); })
+            .then(function () { loadBookings(); refreshStats(); });
+        });
+      });
       body.querySelectorAll('[data-resend]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           btn.disabled = true;
